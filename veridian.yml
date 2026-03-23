@@ -1,0 +1,14 @@
+source_dirs:
+  - rtl/interfaces/
+  - rtl/ip/
+  - rtl/
+auto_search_workdir: false
+verilator:
+  syntax:
+    enabled: true
+    args:
+      - --lint-only
+      - --sv
+      - -Wall
+      - -f
+      - filelist.f  - rtl/ip
