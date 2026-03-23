@@ -12,19 +12,18 @@ module ethernet_framer #(
     axi4s_if.m framed_out  // AXI4-Stream interface for framed Ethernet output
 );
 
-  localparam int PAYLOAD_WIDTH = $bits(payload_in.tdata);
-  localparam int PAYLOAD_KEEP = $bits(payload_in.tkeep);
-  localparam int OUT_WIDTH = $bits(framed_out.tdata);
-  localparam int OUT_KEEP = $bits(framed_out.tkeep);
-  localparam int CLOCK_DELAY = PAYLOAD_WIDTH / OUT_WIDTH; // Number of cycles to transfer one payload beat if PAYLOAD_WIDTH > OUT_WIDTH
+  localparam int PayloadWidth = $bits(payload_in.tdata);
+  localparam int PayloadKeep = $bits(payload_in.tkeep);
+  localparam int OutWidth = $bits(framed_out.tdata);
+  localparam int OutKeep = $bits(framed_out.tkeep);
+  // Ethernet header: dest MAC (48 bits) + src MAC (48 bits) + ethertype (16 bits)
+  logic [(48 + 48 + 16 - 1):0] header;
 
-  logic [(48 + 48 + 16 - 1):0] header; // Ethernet header: dest MAC (48 bits) + src MAC (48 bits) + ethertype (16 bits)
-
-  typedef enum logic [1:0] {
-    R_IDLE,
-    R_READING,
-    R_DONE
-  } read_state_t;
+  always_comb begin
+    header = {
+      ethertype[7:0], ethertype[15:8], src_mac, dest_mac
+    };  // Construct header in correct byte order
+  end
 
   typedef enum logic [3:0] {
     W_IDLE,
@@ -34,24 +33,32 @@ module ethernet_framer #(
     W_DONE
   } write_state_t;
 
-  read_state_t  read_state;
-  write_state_t write_state;
+  write_state_t state;
+  // Number of beats needed to output the header
+  localparam int HeaderBeats = (48 + 48 + 16) / OutWidth;
+  // number of bits in the final header beat (if header doesn't align
+  // perfectly with OUT_WIDTH)
+  localparam int HeaderFinalBits = ((48 + 48 + 16) % OutWidth == 0) ? OutWidth : (48 + 48 + 16);
+  // tkeep value for the final header beat (if header doesn't align
+  // perfectly with OUT_WIDTH)
+  localparam logic [OutKeep-1:0] HeaderEndKeep = '1 >> (OutKeep - (HeaderFinalBits) / 8);
+  // Counter for tracking header beats output
+  logic [$clog2(HeaderBeats + 1)-1:0] header_beat_count;
 
   generate
-
-    /* Same width payload and out */
-
-    if (PAYLOAD_WIDTH == OUT_WIDTH) begin
-      always_ff @(posedge clk, negedge rst_n) begin : output_write
+    if (PayloadWidth <= OutWidth) begin : g_le_width
+      always_ff @(posedge clk, negedge rst_n) begin : output_write_eq_width
         if (!rst_n) begin
         end else begin
-          case (write_state)
+          case (state)
             W_IDLE: begin
               framed_out.tvalid <= 1'b0;
               framed_out.tdata  <= '0;
               framed_out.tkeep  <= '0;
               framed_out.tlast  <= 1'b0;
               framed_out.tuser  <= '0;
+              payload_in.tready  <= 1'b0;
+              header_beat_count <= 0;
               if (payload_in.tvalid) begin
                 state <= W_HEADER;
               end
@@ -59,22 +66,69 @@ module ethernet_framer #(
 
             W_HEADER: begin
               framed_out.tvalid <= 1'b1;
-              if (PAYLOAD_WIDTH >= 14 * 8) begin
-                framed_out.tdata <= {payload_in.tdata[OUT_WIDTH-1 +: (OUT_WIDTH - 14*8)]};
-                framed_out.tkeep <= {(OUT_KEEP) {1'b1}};  // All bytes valid for header
-                framed_out.tlast <= 1'b0;  // Not last beat
-                framed_out.tuser <= '0;  // Set user signal as needed
+              if (OutWidth >= 14 * 8) begin
+                if (framed_out.tready) begin
+                  framed_out.tdata <= (OutWidth)'(header);
+                  framed_out.tkeep <= {
+                    {(OutKeep - 14) {1'b0}}, {14{1'b1}}
+                  };  // Set tkeep for header bytes
+                  state <= W_PAYLOAD;
+                  payload_in.tready <= 1'b1;  // Ready to accept payload
+                end
               end else begin
+                // need to split header across multiple beats
+                // and put the payload in the last beat
+                if (framed_out.tready) begin
+                  if (header_beat_count < HeaderBeats) begin
+                    header_beat_count <= header_beat_count + 1;
+                    framed_out.tdata  <= OutWidth'(header >> (header_beat_count * OutWidth));
+                  end else begin
+                    if (payload_in.tvalid) begin
+                      framed_out.tdata <= header >> (header_beat_count * OutWidth);
+                      framed_out.tkeep <= HeaderEndKeep;
+                      state <= W_PAYLOAD;
+                      payload_in.tready <= 1'b1;  // Ready to accept payload
+                    end
+                  end
+                end
               end
-
             end
 
+            W_PAYLOAD: begin
+              framed_out.tvalid <= payload_in.tvalid;
+              framed_out.tdata  <= payload_in.tdata;
+              framed_out.tkeep  <= payload_in.tkeep;
+              framed_out.tlast  <= payload_in.tlast;
+              framed_out.tuser  <= payload_in.tuser;
+              payload_in.tready <= framed_out.tready;  // Backpressure from output to input
+              if (payload_in.tvalid && framed_out.tready && payload_in.tlast) begin
+                state <= W_DONE;  // Move to done state
+                payload_in.tready <= 1'b0;
+                framed_out.tvalid <= 1'b0;  // Deassert tvalid until next frame
+                framed_out.tdata <= '0;
+                framed_out.tkeep <= '0;
+                framed_out.tlast <= 1'b0;
+                framed_out.tuser <= '0;
+              end
+            end
+
+            W_DONE: begin
+              if (framed_out.tready) begin  // wait for downstream to accept the last beat
+                state <= W_IDLE;
+                framed_out.tvalid <= 1'b0;  // Deassert tvalid until next frame
+                framed_out.tlast <= 1'b0;
+                framed_out.tdata <= '0;
+                framed_out.tkeep <= '0;
+                framed_out.tuser <= '0;
+              end
+            end
+
+            W_FCS: begin
+              // TODO:
+              state <= W_IDLE;
+            end
             default: begin
-              framed_out.tvalid <= 1'b0;
-              framed_out.tdata  <= '0;
-              framed_out.tkeep  <= '0;
-              framed_out.tlast  <= 1'b0;
-              framed_out.tuser  <= '0;
+              state <= W_IDLE;  // get a reset
             end
           endcase
         end
@@ -83,18 +137,107 @@ module ethernet_framer #(
 
     /* Payload wider than out */
 
-    if (PAYLOAD_WIDTH > OUT_WIDTH) begin
-      // Logic to split payload into multiple output beats
-      logic [$clog2(
-CLOCK_DELAY
-)-1:0] cycle_count;  // Counter for tracking cycles when PAYLOAD_WIDTH > OUT_WIDTH
-    end
+    if (PayloadWidth > OutWidth) begin : g_gt_width
+        // Number of cycles to transfer one payload beat if PAYLOAD_WIDTH > OUT_WIDTH
+        localparam int ClockDelay = PayloadWidth / OutWidth + ((PayloadWidth % OutWidth) ? 1 : 0);
+      logic [$clog2(ClockDelay)-1:0] payload_beat_count;  // Counter for splitting payload beats
+      always_ff @(posedge clk, negedge rst_n) begin : output_write_wide_payload
+        if (!rst_n) begin
+        end else begin
+          case (state)
+            W_IDLE: begin
+              payload_beat_count <= 0;
+              payload_in.tready  <= 1'b0;
+              framed_out.tvalid  <= 1'b0;
+              framed_out.tdata   <= '0;
+              framed_out.tkeep   <= '0;
+              framed_out.tlast   <= 1'b0;
+              framed_out.tuser   <= '0;
+              header_beat_count  <= 0;
+              if (payload_in.tvalid) begin
+                state <= W_HEADER;
+              end
+            end
 
+            W_HEADER: begin
+              framed_out.tvalid <= 1'b1;
+              if (OutWidth >= 14 * 8) begin
+                if (framed_out.tready) begin
+                  framed_out.tdata <= (OutWidth)'(header);
+                  framed_out.tkeep <= {
+                    {(OutKeep - 14) {1'b0}}, {14{1'b1}}
+                  };  // Set tkeep for header bytes
+                  state <= W_PAYLOAD;
+                  payload_in.tready <= 1'b1;  // Ready to accept payload
+                end
+              end else begin
+                // need to split header across multiple beats
+                // and put the payload in the last beat
+                if (framed_out.tready) begin
+                  if (header_beat_count < HeaderBeats) begin
+                    header_beat_count <= header_beat_count + 1;
+                    framed_out.tdata  <= OutWidth'(header >> (header_beat_count * OutWidth));
+                  end else begin
+                    if (payload_in.tvalid) begin
+                      framed_out.tdata <= header >> (header_beat_count * OutWidth);
+                      framed_out.tkeep <= HeaderEndKeep;
+                      state <= W_PAYLOAD;
+                      payload_in.tready <= 1'b1;  // Ready to accept payload
+                    end
+                  end
+                end
+              end
+            end
 
-    /* Payload narrower than out */
+            W_PAYLOAD: begin
+              if (framed_out.tready) begin
+                if (payload_beat_count == ClockDelay - 1) begin
+                  if (payload_in.tlast) begin
+                    framed_out.tvalid <= 1'b1;
+                    framed_out.tdata <= payload_in.tdata >> (payload_beat_count * OutWidth);
+                    framed_out.tkeep <= payload_in.tkeep >> (payload_beat_count * OutWidth / 8);
+                    framed_out.tlast <= 1'b1;
+                    framed_out.tuser <= payload_in.tuser;
+                    state <= W_DONE;  // Move to done state after last beat of payload
+                    payload_in.tready <= 1'b0;
+                  end else begin
+                    payload_beat_count <= 0;
+                    framed_out.tdata   <= payload_in.tdata >> (payload_beat_count * OutWidth);
+                    framed_out.tkeep   <= payload_in.tkeep >> (payload_beat_count * OutWidth / 8);
+                    framed_out.tuser   <= payload_in.tuser;
+                    payload_in.tready  <= 1'b1;  // Ready for next beat of payload
+                  end
+                end else begin
+                  framed_out.tdata   <= payload_in.tdata >> (payload_beat_count * OutWidth);
+                  framed_out.tkeep   <= payload_in.tkeep >> (payload_beat_count * OutWidth / 8);
+                  framed_out.tuser   <= payload_in.tuser;
+                  payload_beat_count <= payload_beat_count + 1;
+                  payload_in.tready  <= 1'b0;
+                end
+              end
+            end
 
-    if (PAYLOAD_WIDTH < OUT_WIDTH) begin
-      // Logic to pack multiple payload beats into one output beat
+            W_DONE: begin
+              if (framed_out.tready) begin  // wait for downstream to accept the last beat
+                state <= W_IDLE;
+                framed_out.tvalid <= 1'b0;  // Deassert tvalid until next frame
+                framed_out.tlast <= 1'b0;
+                framed_out.tdata <= '0;
+                framed_out.tkeep <= '0;
+                framed_out.tuser <= '0;
+              end
+            end
+
+            W_FCS: begin
+              // TODO:
+              state <= W_IDLE;
+            end
+            default: begin
+              state <= W_IDLE;  // get a reset
+            end
+          endcase
+        end
+      end
     end
   endgenerate
 
