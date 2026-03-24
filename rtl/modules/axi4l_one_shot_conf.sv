@@ -22,6 +22,9 @@ module axi4l_one_shot_conf #(
 
   logic aw_done, w_done;
 
+  assign axi4l_conf.arvalid = 1'b0;
+  assign axi4l_conf.rready  = 1'b0;
+  assign axi4l_conf.araddr  = '0;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -32,15 +35,14 @@ module axi4l_one_shot_conf #(
       axi4l_conf.wdata <= '0;
       axi4l_conf.wstrb <= '0;
       axi4l_conf.bready <= 1'b0;
-      axi4l_conf.arvalid <= 1'b0;
-      axi4l_conf.rready <= 1'b0;
-      axi4l_conf.araddr <= '0;
       w_done <= 1'b0;
       aw_done <= 1'b0;
+      done <= 1'b0;
     end else begin
-      case (state)
+      unique case (state)
         IDLE: begin
           state <= WRITE;
+          done <= 1'b0;
           axi4l_conf.awaddr <= CONF_ADDR;
           axi4l_conf.wdata <= CONF_DATA;
           axi4l_conf.wstrb <= {(DATA_WIDTH / 8) {1'b1}};
@@ -67,14 +69,14 @@ module axi4l_one_shot_conf #(
 
         RESP: begin
           if (axi4l_conf.bvalid && axi4l_conf.bready) begin
-            done <= 1'b1;
             axi4l_conf.bready <= 1'b0;
             state <= DONE;
+            done <= 1'b1;
           end
         end
         DONE: begin
-          done  <= 1'b1;
-          state <= DONE;
         end
-        d
+      endcase
+    end
+  end
 endmodule

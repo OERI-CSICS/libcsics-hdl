@@ -50,7 +50,7 @@ module ethernet_framer #(
       always_ff @(posedge clk, negedge rst_n) begin : output_write_eq_width
         if (!rst_n) begin
         end else begin
-          case (state)
+          unique case (state)
             W_IDLE: begin
               framed_out.tvalid <= 1'b0;
               framed_out.tdata  <= '0;
@@ -67,8 +67,8 @@ module ethernet_framer #(
             W_HEADER: begin
               framed_out.tvalid <= 1'b1;
               if (OutWidth >= 14 * 8) begin
-                if (framed_out.tready) begin
                   framed_out.tdata <= (OutWidth)'(header);
+                if (framed_out.tready) begin
                   framed_out.tkeep <= {
                     {(OutKeep - 14) {1'b0}}, {14{1'b1}}
                   };  // Set tkeep for header bytes
@@ -83,8 +83,8 @@ module ethernet_framer #(
                     header_beat_count <= header_beat_count + 1;
                     framed_out.tdata  <= OutWidth'(header >> (header_beat_count * OutWidth));
                   end else begin
-                    if (payload_in.tvalid) begin
                       framed_out.tdata <= header >> (header_beat_count * OutWidth);
+                    if (payload_in.tvalid) begin
                       framed_out.tkeep <= HeaderEndKeep;
                       state <= W_PAYLOAD;
                       payload_in.tready <= 1'b1;  // Ready to accept payload
@@ -144,7 +144,7 @@ module ethernet_framer #(
       always_ff @(posedge clk, negedge rst_n) begin : output_write_wide_payload
         if (!rst_n) begin
         end else begin
-          case (state)
+          unique case (state)
             W_IDLE: begin
               payload_beat_count <= 0;
               payload_in.tready  <= 1'b0;
