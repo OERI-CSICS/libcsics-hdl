@@ -1,7 +1,6 @@
 # File names are either absolute or relative to the parent folder of the vhdl_ls.toml file
 [libraries]
 io.files = [
-'rtl/io/*.vhd',
 'rtl/io/*.vhdl',
 ]
 
