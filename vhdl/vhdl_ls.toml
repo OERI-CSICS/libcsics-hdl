@@ -1,9 +1,0 @@
-# File names are either absolute or relative to the parent folder of the vhdl_ls.toml file
-[libraries]
-io.files = [
-'rtl/io/*.vhdl',
-]
-
-[lint]
-unused = 'error' # Upgrade the 'unused' diagnostic to the 'error' severity
-unnecessary_work_library = false # Disable linting for the 'library work;' statement
