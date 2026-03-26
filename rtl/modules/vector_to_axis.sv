@@ -19,6 +19,18 @@ module vector_to_axis #(
   } state_t;
 
   state_t state;
+  
+  logic tvalid;
+  logic tdata;
+  logic tkeep;
+  logic tlast;
+  logic tuser;
+  
+  assign axis_out.tvalid = tvalid;
+  assign axis_out.tdata = tdata;
+  assign axis_out.tkeep = tkeep;
+  assign axis_out.tlast = tlast;
+  assign axis_out.tuser = tuser;
 
   generate
 
@@ -26,31 +38,31 @@ module vector_to_axis #(
       always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
           state <= IDLE;
-          axis_out.tvalid <= 1'b0;
-          axis_out.tdata <= '0;
-          axis_out.tkeep <= '0;
-          axis_out.tlast <= 1'b0;
-          axis_out.tuser <= '0;
+          tvalid <= 1'b0;
+          tdata <= '0;
+          tkeep <= '0;
+          tlast <= 1'b0;
+          tuser <= '0;
           finished <= 1'b0;
         end else begin
           case (state)
             IDLE: begin
               if (valid_in) begin
                 state <= SENDING;
-                axis_out.tdata <= {
+                tdata <= {
                   {(STREAM_WIDTH - BUFFER_SIZE) {1'b0}}, buf_in
                 };  // Pad with zeros if needed
-                axis_out.tkeep <= {
+                tkeep <= {
                   {(KEEP_WIDTH - BUFFER_SIZE / 8) {1'b0}}, {(BUFFER_SIZE / 8) {1'b1}}
                 };  // Set tkeep for valid bytes
-                axis_out.tlast <= 1'b1;  // Single beat, so tlast is high
-                axis_out.tvalid <= 1'b1;
+                tlast <= 1'b1;  // Single beat, so tlast is high
+                tvalid <= 1'b1;
               end
             end
             SENDING: begin
-              if (axis_out.tready && axis_out.tvalid) begin
+              if (axis_out.tready && tvalid) begin
                 state <= DONE;
-                axis_out.tvalid <= 1'b0;  // Deassert after handshake
+                tvalid <= 1'b0;  // Deassert after handshake
                 finished <= 1'b1;  // Indicate done after sending data
               end
             end
@@ -59,7 +71,7 @@ module vector_to_axis #(
                 state <= IDLE;  // Wait for valid_in to go low before resetting
                 finished <= 1'b0;  // Reset finished signal
               end
-              axis_out.tvalid <= 1'b0;  // Ensure tvalid is low in DONE state
+              tvalid <= 1'b0;  // Ensure tvalid is low in DONE state
             end
           endcase
         end
@@ -75,11 +87,11 @@ module vector_to_axis #(
       always_ff @(posedge clk, negedge rst_n) begin
         if (!rst_n) begin
           state <= IDLE;
-          axis_out.tvalid <= 1'b0;
-          axis_out.tdata <= '0;
-          axis_out.tkeep <= '0;
-          axis_out.tlast <= 1'b0;
-          axis_out.tuser <= '0;
+          tvalid <= 1'b0;
+          tdata <= '0;
+          tkeep <= '0;
+          tlast <= 1'b0;
+          tuser <= '0;
           beat_count <= '0;
           finished <= 1'b0;
         end else begin
@@ -91,17 +103,17 @@ module vector_to_axis #(
               end
             end
             SENDING: begin
-              axis_out.tdata <= buf_in[beat_count * STREAM_WIDTH +: STREAM_WIDTH]; // Select current beat
-              axis_out.tkeep <= (beat_count == NUM_BEATS - 1) ? LAST_BEAT_KEEP : '1;
-              axis_out.tlast <= (beat_count == NUM_BEATS - 1);  // Set tlast on last beat
-              axis_out.tvalid <= 1'b1;
+              tdata <= buf_in[beat_count * STREAM_WIDTH +: STREAM_WIDTH]; // Select current beat
+              tkeep <= (beat_count == NUM_BEATS - 1) ? LAST_BEAT_KEEP : '1;
+              tlast <= (beat_count == NUM_BEATS - 1);  // Set tlast on last beat
+              tvalid <= 1'b1;
 
               if (axis_out.tready) begin
                 if (beat_count == (NUM_BEATS - 1)) begin
                   state <= DONE;  // Last beat, move to DONE state
                   finished <= 1'b1;  // Indicate done after sending all data
-                  axis_out.tvalid <= 1'b0;
-                  axis_out.tlast <= 1'b0;  // Reset tlast for next transaction
+                  tvalid <= 1'b0;
+                  tlast <= 1'b0;  // Reset tlast for next transaction
                 end else begin
                   beat_count <= beat_count + 1;  // Move to next beat
                 end

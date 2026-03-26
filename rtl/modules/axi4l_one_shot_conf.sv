@@ -25,16 +25,34 @@ module axi4l_one_shot_conf #(
   assign axi4l_conf.arvalid = 1'b0;
   assign axi4l_conf.rready  = 1'b0;
   assign axi4l_conf.araddr  = '0;
+  
+  logic awvalid;
+  logic wvalid;
+  logic awaddr;
+  logic wdata;
+  logic wstrb;
+  logic bready;
+  logic awready;
+  logic wready;
+  
+  assign axi4l_conf.awvalid = awvalid;
+  assign axi4l_conf.wvalid = wvalid;
+  assign axi4l_conf.awaddr = awaddr;
+  assign axi4l_conf.wdata = wdata;
+  assign axi4l_conf.wstrb = wstrb;
+  assign axi4l_conf.bready = bready;
+  assign awready = axi4l_conf.awready;
+  assign wready = axi4l_conf.wready;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       state <= IDLE;
-      axi4l_conf.awvalid <= 1'b0;
-      axi4l_conf.wvalid <= 1'b0;
-      axi4l_conf.awaddr <= '0;
-      axi4l_conf.wdata <= '0;
-      axi4l_conf.wstrb <= '0;
-      axi4l_conf.bready <= 1'b0;
+      awvalid <= 1'b0;
+      wvalid <= 1'b0;
+      awaddr <= '0;
+      wdata <= '0;
+      wstrb <= '0;
+      bready <= 1'b0;
       w_done <= 1'b0;
       aw_done <= 1'b0;
       done <= 1'b0;
@@ -43,33 +61,32 @@ module axi4l_one_shot_conf #(
         IDLE: begin
           state <= WRITE;
           done <= 1'b0;
-          axi4l_conf.awaddr <= CONF_ADDR;
-          axi4l_conf.wdata <= CONF_DATA;
-          axi4l_conf.wstrb <= {(DATA_WIDTH / 8) {1'b1}};
-          axi4l_conf.araddr <= '0;
-          axi4l_conf.awvalid <= 1'b1;
-          axi4l_conf.wvalid <= 1'b1;
-          axi4l_conf.bready <= 1'b1;
+          awaddr <= CONF_ADDR;
+          wdata <= CONF_DATA;
+          wstrb <= {(DATA_WIDTH / 8) {1'b1}};
+          awvalid <= 1'b1;
+          wvalid <= 1'b1;
+          bready <= 1'b1;
         end
         WRITE: begin
-          if (axi4l_conf.awready && axi4l_conf.awvalid) begin
+          if (awready && awvalid) begin
             aw_done <= 1'b1;
-            axi4l_conf.awvalid <= 1'b0;  // Deassert after handshake
+            awvalid <= 1'b0;  // Deassert after handshake
           end
-          if (axi4l_conf.wready && axi4l_conf.wvalid) begin
+          if (wready && wvalid) begin
             w_done <= 1'b1;
-            axi4l_conf.wvalid <= 1'b0;  // Deassert after handshake
+            wvalid <= 1'b0;  // Deassert after handshake
           end
 
-          if ((aw_done || (axi4l_conf.awvalid && axi4l_conf.awready))
-              && (w_done || (axi4l_conf.wready && axi4l_conf.wvalid))) begin
+          if ((aw_done || (awvalid && awready))
+              && (w_done || (axi4l_conf.wready && wvalid))) begin
             state <= RESP;
           end
         end
 
         RESP: begin
-          if (axi4l_conf.bvalid && axi4l_conf.bready) begin
-            axi4l_conf.bready <= 1'b0;
+          if (axi4l_conf.bvalid && bready) begin
+            bready <= 1'b0;
             state <= DONE;
             done <= 1'b1;
           end
