@@ -55,9 +55,8 @@ module axi4l_one_shot_conf #(
       bready <= 1'b0;
       w_done <= 1'b0;
       aw_done <= 1'b0;
-      done <= 1'b0;
     end else begin
-      unique case (state)
+      case (state)
         IDLE: begin
           state <= WRITE;
           done <= 1'b0;
@@ -88,12 +87,11 @@ module axi4l_one_shot_conf #(
           if (axi4l_conf.bvalid && bready) begin
             bready <= 1'b0;
             state <= DONE;
-            done <= 1'b1;
           end
         end
         DONE: begin
+          done  <= 1'b1;
+          state <= DONE;
         end
-      endcase
-    end
-  end
+        d
 endmodule
