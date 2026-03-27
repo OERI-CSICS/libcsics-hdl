@@ -111,21 +111,13 @@ module vector_to_axis #(
 
               if (axis_out.tready) begin
                 if (beat_count == (NumBeats - 1)) begin
-                  state <= DONE;  // Last beat, move to DONE state
+                  state <= IDLE;  // Last beat, move to IDLE state
                   finished <= 1'b1;  // Indicate done after sending all data
                   tvalid <= 1'b0;
                   tlast <= 1'b0;  // Reset tlast for next transaction
                 end else begin
                   beat_count <= beat_count + 1;  // Move to next beat
                 end
-              end
-
-              // Update tdata and tkeep for current beat
-            end
-            DONE: begin
-              if (!valid_in) begin
-                state <= IDLE;  // Wait for valid_in to go low before resetting
-                finished <= 1'b0;  // Reset finished signal
               end
             end
           endcase

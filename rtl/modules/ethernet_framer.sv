@@ -64,6 +64,13 @@ module ethernet_framer #(
     if (PayloadWidth <= OutWidth) begin : g_le_width
       always_ff @(posedge clk, negedge rst_n) begin : output_write_eq_width
         if (!rst_n) begin
+            out_tvalid <= 1'b0;
+            out_tdata <= '0;
+            out_tkeep <= '0;
+            out_tlast <= '0;
+            out_tuser <= '0;
+            payload_tready <= '0;
+            state <= W_IDLE;
         end else begin
           unique case (state)
             W_IDLE: begin

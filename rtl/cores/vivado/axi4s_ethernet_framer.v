@@ -55,9 +55,9 @@ module axi4s_ethernet_framer #(
     output wire sfp_ena
 );
 
-  axi4s_if payload_in ();
+  axi4s_if #(.DATA_WIDTH (PAYLOAD_WIDTH)) payload_in  ();
 
-  axi4s_if framed_out ();
+  axi4s_if #(.DATA_WIDTH (OUT_WIDTH)) framed_out ();
 
   axi4l_if axi4l_ctrl ();
   
