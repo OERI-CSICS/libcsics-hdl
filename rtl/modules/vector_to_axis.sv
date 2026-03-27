@@ -9,8 +9,8 @@ module vector_to_axis #(
     axi4s_if.m axis_out
 );
 
-  localparam int STREAM_WIDTH = $bits(axis_out.tdata);
-  localparam int KEEP_WIDTH = $bits(axis_out.tkeep);
+  localparam int StreamWidth = $bits(axis_out.tdata);
+  localparam int KeepWidth = $bits(axis_out.tkeep);
 
   typedef enum logic [3:0] {
     IDLE = 4'b0000,
@@ -19,22 +19,22 @@ module vector_to_axis #(
   } state_t;
 
   state_t state;
-  
-  logic tvalid;
-  logic tdata;
-  logic tkeep;
-  logic tlast;
-  logic tuser;
-  
+
+  logic   tvalid;
+  logic   tdata;
+  logic   tkeep;
+  logic   tlast;
+  logic   tuser;
+
   assign axis_out.tvalid = tvalid;
-  assign axis_out.tdata = tdata;
-  assign axis_out.tkeep = tkeep;
-  assign axis_out.tlast = tlast;
-  assign axis_out.tuser = tuser;
+  assign axis_out.tdata  = tdata;
+  assign axis_out.tkeep  = tkeep;
+  assign axis_out.tlast  = tlast;
+  assign axis_out.tuser  = tuser;
 
   generate
 
-    if (BUFFER_SIZE <= STREAM_WIDTH) begin : gen_small_buffer
+    if (BUFFER_SIZE <= StreamWidth) begin : gen_small_buffer
       always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
           state <= IDLE;
@@ -45,15 +45,15 @@ module vector_to_axis #(
           tuser <= '0;
           finished <= 1'b0;
         end else begin
-          case (state)
+          unique case (state)
             IDLE: begin
               if (valid_in) begin
                 state <= SENDING;
                 tdata <= {
-                  {(STREAM_WIDTH - BUFFER_SIZE) {1'b0}}, buf_in
+                  {(StreamWidth - BUFFER_SIZE) {1'b0}}, buf_in
                 };  // Pad with zeros if needed
                 tkeep <= {
-                  {(KEEP_WIDTH - BUFFER_SIZE / 8) {1'b0}}, {(BUFFER_SIZE / 8) {1'b1}}
+                  {(KeepWidth - BUFFER_SIZE / 8) {1'b0}}, {(BUFFER_SIZE / 8) {1'b1}}
                 };  // Set tkeep for valid bytes
                 tlast <= 1'b1;  // Single beat, so tlast is high
                 tvalid <= 1'b1;
@@ -78,11 +78,12 @@ module vector_to_axis #(
       end
 
     end else begin : gen_normal_buffer
-      logic [$clog2(BUFFER_SIZE/STREAM_WIDTH)-1:0] beat_count;
-      localparam int NUM_BEATS = BUFFER_SIZE / STREAM_WIDTH;
-      localparam int MOD_BEATS = BUFFER_SIZE % STREAM_WIDTH;
-      localparam int LAST_KEEP_BITS = (MOD_BEATS == 0) ? KEEP_WIDTH : (MOD_BEATS / 8);
-      localparam logic [KEEP_WIDTH-1:0] LAST_BEAT_KEEP = '1 >> (KEEP_WIDTH - LAST_KEEP_BITS); // Shift to set only valid bits
+      logic [$clog2(BUFFER_SIZE/StreamWidth)-1:0] beat_count;
+      localparam int NumBeats = BUFFER_SIZE / StreamWidth;
+      localparam int ModBeats = BUFFER_SIZE % StreamWidth;
+      localparam int LastKeepBits = (ModBeats == 0) ? KeepWidth : (ModBeats / 8);
+      // Shift to set only valid bits
+      localparam logic [KeepWidth-1:0] LastBeatKeep = '1 >> (KeepWidth - LastKeepBits);
 
       always_ff @(posedge clk, negedge rst_n) begin
         if (!rst_n) begin
@@ -95,7 +96,7 @@ module vector_to_axis #(
           beat_count <= '0;
           finished <= 1'b0;
         end else begin
-          case (state)
+          unique case (state)
             IDLE: begin
               if (valid_in) begin
                 state <= SENDING;
@@ -103,13 +104,13 @@ module vector_to_axis #(
               end
             end
             SENDING: begin
-              tdata <= buf_in[beat_count * STREAM_WIDTH +: STREAM_WIDTH]; // Select current beat
-              tkeep <= (beat_count == NUM_BEATS - 1) ? LAST_BEAT_KEEP : '1;
-              tlast <= (beat_count == NUM_BEATS - 1);  // Set tlast on last beat
+              tdata  <= buf_in[beat_count*StreamWidth+:StreamWidth];  // Select current beat
+              tkeep  <= (beat_count == NumBeats - 1) ? LastBeatKeep : '1;
+              tlast  <= (beat_count == NumBeats - 1);  // Set tlast on last beat
               tvalid <= 1'b1;
 
               if (axis_out.tready) begin
-                if (beat_count == (NUM_BEATS - 1)) begin
+                if (beat_count == (NumBeats - 1)) begin
                   state <= DONE;  // Last beat, move to DONE state
                   finished <= 1'b1;  // Indicate done after sending all data
                   tvalid <= 1'b0;

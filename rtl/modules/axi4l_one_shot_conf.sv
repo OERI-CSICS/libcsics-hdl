@@ -25,7 +25,7 @@ module axi4l_one_shot_conf #(
   assign axi4l_conf.arvalid = 1'b0;
   assign axi4l_conf.rready  = 1'b0;
   assign axi4l_conf.araddr  = '0;
-  
+
   logic awvalid;
   logic wvalid;
   logic awaddr;
@@ -34,7 +34,7 @@ module axi4l_one_shot_conf #(
   logic bready;
   logic awready;
   logic wready;
-  
+
   assign axi4l_conf.awvalid = awvalid;
   assign axi4l_conf.wvalid = wvalid;
   assign axi4l_conf.awaddr = awaddr;
@@ -46,17 +46,17 @@ module axi4l_one_shot_conf #(
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      state <= IDLE;
+      state   <= IDLE;
       awvalid <= 1'b0;
-      wvalid <= 1'b0;
-      awaddr <= '0;
-      wdata <= '0;
-      wstrb <= '0;
-      bready <= 1'b0;
-      w_done <= 1'b0;
+      wvalid  <= 1'b0;
+      awaddr  <= '0;
+      wdata   <= '0;
+      wstrb   <= '0;
+      bready  <= 1'b0;
+      w_done  <= 1'b0;
       aw_done <= 1'b0;
     end else begin
-      case (state)
+      unique case (state)
         IDLE: begin
           state <= WRITE;
           done <= 1'b0;
@@ -66,6 +66,8 @@ module axi4l_one_shot_conf #(
           awvalid <= 1'b1;
           wvalid <= 1'b1;
           bready <= 1'b1;
+          aw_done <= 1'b0;
+          w_done <= 1'b0;
         end
         WRITE: begin
           if (awready && awvalid) begin
@@ -77,8 +79,7 @@ module axi4l_one_shot_conf #(
             wvalid <= 1'b0;  // Deassert after handshake
           end
 
-          if ((aw_done || (awvalid && awready))
-              && (w_done || (axi4l_conf.wready && wvalid))) begin
+          if ((aw_done || (awvalid && awready)) && (w_done || (axi4l_conf.wready && wvalid))) begin
             state <= RESP;
           end
         end
@@ -86,12 +87,14 @@ module axi4l_one_shot_conf #(
         RESP: begin
           if (axi4l_conf.bvalid && bready) begin
             bready <= 1'b0;
-            state <= DONE;
+            state  <= DONE;
           end
         end
         DONE: begin
           done  <= 1'b1;
           state <= DONE;
         end
-        d
+      endcase
+    end
+  end
 endmodule
