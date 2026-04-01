@@ -124,13 +124,8 @@ module ethernet_framer #(
               out_tuser  <= payload_in.tuser;
               payload_tready <= out_tready;  // Backpressure from output to input
               if (payload_in.tvalid && framed_out.tready && payload_in.tlast) begin
-                state <= W_DONE;  // Move to done state
+                state <= W_IDLE;  // Move to done state
                 payload_tready <= 1'b0;
-                out_tvalid <= 1'b0;  // Deassert tvalid until next frame
-                out_tdata <= '0;
-                out_tkeep <= '0;
-                out_tlast <= 1'b0;
-                out_tuser <= '0;
               end
             end
 

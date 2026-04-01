@@ -21,8 +21,8 @@ module vector_to_axis #(
   state_t state;
 
   logic   tvalid;
-  logic   tdata;
-  logic   tkeep;
+  logic   [StreamWidth-1:0] tdata;
+  logic   [KeepWidth-1:0] tkeep;
   logic   tlast;
   logic   tuser;
 
@@ -35,6 +35,7 @@ module vector_to_axis #(
   generate
 
     if (BUFFER_SIZE <= StreamWidth) begin : gen_small_buffer
+    localparam BufSize = (StreamWidth - BUFFER_SIZE == 0) ? StreamWidth : StreamWidth - BUFFER_SIZE;
       always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
           state <= IDLE;
@@ -57,20 +58,17 @@ module vector_to_axis #(
                 };  // Set tkeep for valid bytes
                 tlast <= 1'b1;  // Single beat, so tlast is high
                 tvalid <= 1'b1;
+                finished <= 1'b0;
               end
             end
             SENDING: begin
-              if (axis_out.tready && tvalid) begin
+              if (axis_out.tready) begin
                 state <= DONE;
-                tvalid <= 1'b0;  // Deassert after handshake
                 finished <= 1'b1;  // Indicate done after sending data
               end
             end
             DONE: begin
-              if (!valid_in) begin
                 state <= IDLE;  // Wait for valid_in to go low before resetting
-                finished <= 1'b0;  // Reset finished signal
-              end
               tvalid <= 1'b0;  // Ensure tvalid is low in DONE state
             end
           endcase
@@ -78,7 +76,7 @@ module vector_to_axis #(
       end
 
     end else begin : gen_normal_buffer
-      logic [$clog2(BUFFER_SIZE/StreamWidth)-1:0] beat_count;
+    logic [$clog2(BUFFER_SIZE/StreamWidth)+1:0] beat_count;;
       localparam int NumBeats = BUFFER_SIZE / StreamWidth;
       localparam int ModBeats = BUFFER_SIZE % StreamWidth;
       localparam int LastKeepBits = (ModBeats == 0) ? KeepWidth : (ModBeats / 8);
@@ -98,25 +96,30 @@ module vector_to_axis #(
         end else begin
           unique case (state)
             IDLE: begin
+            tlast  <= 1'b0;
+              tvalid <= 1'b0;
               if (valid_in) begin
                 state <= SENDING;
                 beat_count <= '0;  // Reset beat count at start
+                tdata  <= buf_in[StreamWidth-1:0];  // Select current beat
+              tkeep  <= '1;
+              tvalid <= 1'b1;
               end
             end
             SENDING: begin
               tdata  <= buf_in[beat_count*StreamWidth+:StreamWidth];  // Select current beat
-              tkeep  <= (beat_count == NumBeats - 1) ? LastBeatKeep : '1;
-              tlast  <= (beat_count == NumBeats - 1);  // Set tlast on last beat
-              tvalid <= 1'b1;
+              tkeep  <= (beat_count == NumBeats) ? LastBeatKeep : '1;
 
               if (axis_out.tready) begin
-                if (beat_count == (NumBeats - 1)) begin
+              beat_count <= beat_count + 1;
+                if (beat_count == NumBeats - 1) begin
+                  tlast <= 1'b1;
+                end else if (beat_count == NumBeats) begin
                   state <= IDLE;  // Last beat, move to IDLE state
                   finished <= 1'b1;  // Indicate done after sending all data
+                  tlast <= 1'b0;
                   tvalid <= 1'b0;
-                  tlast <= 1'b0;  // Reset tlast for next transaction
-                end else begin
-                  beat_count <= beat_count + 1;  // Move to next beat
+                  beat_count <= '0;
                 end
               end
             end
