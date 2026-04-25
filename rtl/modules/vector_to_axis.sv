@@ -1,133 +1,61 @@
 module vector_to_axis #(
     parameter int unsigned BUFFER_SIZE = 16
 ) (
-    input logic clk,
-    input logic rst_n,
-    input logic valid_in,
-    output logic finished,
     input logic [BUFFER_SIZE-1:0] buf_in,
-    axi4s_if.m axis_out
+    axi4s_if.m m_axis,
+
+    input  logic clk,
+    input  logic rst_n,
+    input  logic valid_in,
+    output logic ready
+
 );
 
-  localparam int StreamWidth = $bits(axis_out.tdata);
-  localparam int KeepWidth = $bits(axis_out.tkeep);
+  localparam int unsigned AxisWidth = m_axis.DATA_WIDTH;
+  localparam int Beats = (BUFFER_SIZE + AxisWidth - 1) / AxisWidth;
+  localparam logic [$clog2(Beats+1)-1:0] LastBeat = Beats[$clog2(Beats+1)-1:0] - 1;
+  localparam int unsigned PaddedSize = Beats * AxisWidth;
+  localparam int unsigned LastValidBits = BUFFER_SIZE % AxisWidth;
+  localparam logic [m_axis.KEEP_WIDTH-1:0] LastKeep =
+    {{(m_axis.KEEP_WIDTH){1'b1}}} >>
+    (m_axis.KEEP_WIDTH - (LastValidBits + 7) / 8);  // Calculate tkeep for last beat
+  logic [PaddedSize-1:0] shift_reg;
+  logic [$clog2(Beats+1)-1:0] beat_count;
+  logic active;
 
-  typedef enum logic [3:0] {
-    IDLE = 4'b0000,
-    SENDING = 4'b0001,
-    DONE = 4'b0010
-  } state_t;
+  assign ready = !active;
+  assign m_axis.tuser = '0;  // No user signals in this design
+  assign m_axis.tvalid = valid_in;
+  assign m_axis.tdata = shift_reg[AxisWidth-1:0];
+  assign m_axis.tlast = (beat_count == LastBeat) && active;
 
-  state_t state;
-
-  logic   tvalid;
-  logic   [StreamWidth-1:0] tdata;
-  logic   [KeepWidth-1:0] tkeep;
-  logic   tlast;
-  logic   tuser;
-
-  assign axis_out.tvalid = tvalid;
-  assign axis_out.tdata  = tdata;
-  assign axis_out.tkeep  = tkeep;
-  assign axis_out.tlast  = tlast;
-  assign axis_out.tuser  = tuser;
-
-  generate
-
-    if (BUFFER_SIZE <= StreamWidth) begin : gen_small_buffer
-    localparam BufSize = (StreamWidth - BUFFER_SIZE == 0) ? StreamWidth : StreamWidth - BUFFER_SIZE;
-      always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-          state <= IDLE;
-          tvalid <= 1'b0;
-          tdata <= '0;
-          tkeep <= '0;
-          tlast <= 1'b0;
-          tuser <= '0;
-          finished <= 1'b0;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      active <= '0;
+      beat_count <= '0;
+      shift_reg <= '0;
+    end else begin
+      if (!active && ready) begin
+        active <= 1'b1;
+        beat_count <= '0;
+        // Pad with zeros if BUFFER_SIZE is not a multiple of AxisWidth
+        shift_reg <= (PaddedSize)'(buf_in);
+        // Default to all bytes valid, will adjust for last beat
+        if (Beats == 1) begin
+          m_axis.tkeep <= LastKeep;
         end else begin
-          unique case (state)
-            IDLE: begin
-              if (valid_in) begin
-                state <= SENDING;
-                tdata <= {
-                  {(StreamWidth - BUFFER_SIZE) {1'b0}}, buf_in
-                };  // Pad with zeros if needed
-                tkeep <= {
-                  {(KeepWidth - BUFFER_SIZE / 8) {1'b0}}, {(BUFFER_SIZE / 8) {1'b1}}
-                };  // Set tkeep for valid bytes
-                tlast <= 1'b1;  // Single beat, so tlast is high
-                tvalid <= 1'b1;
-                finished <= 1'b0;
-              end
-            end
-            SENDING: begin
-              if (axis_out.tready) begin
-                state <= DONE;
-                finished <= 1'b1;  // Indicate done after sending data
-              end
-            end
-            DONE: begin
-                state <= IDLE;  // Wait for valid_in to go low before resetting
-              tvalid <= 1'b0;  // Ensure tvalid is low in DONE state
-            end
-          endcase
+          m_axis.tkeep <= {m_axis.KEEP_WIDTH{1'b1}};
         end
-      end
-
-    end else begin : gen_normal_buffer
-    logic [$clog2(BUFFER_SIZE/StreamWidth)+1:0] beat_count;;
-      localparam int NumBeats = BUFFER_SIZE / StreamWidth;
-      localparam int ModBeats = BUFFER_SIZE % StreamWidth;
-      localparam int LastKeepBits = (ModBeats == 0) ? KeepWidth : (ModBeats / 8);
-      // Shift to set only valid bits
-      localparam logic [KeepWidth-1:0] LastBeatKeep = '1 >> (KeepWidth - LastKeepBits);
-
-      always_ff @(posedge clk, negedge rst_n) begin
-        if (!rst_n) begin
-          state <= IDLE;
-          tvalid <= 1'b0;
-          tdata <= '0;
-          tkeep <= '0;
-          tlast <= 1'b0;
-          tuser <= '0;
-          beat_count <= '0;
-          finished <= 1'b0;
-        end else begin
-          unique case (state)
-            IDLE: begin
-            tlast  <= 1'b0;
-              tvalid <= 1'b0;
-              if (valid_in) begin
-                state <= SENDING;
-                beat_count <= '0;  // Reset beat count at start
-                tdata  <= buf_in[StreamWidth-1:0];  // Select current beat
-              tkeep  <= '1;
-              tvalid <= 1'b1;
-              end
-            end
-            SENDING: begin
-              tdata  <= buf_in[beat_count*StreamWidth+:StreamWidth];  // Select current beat
-              tkeep  <= (beat_count == NumBeats) ? LastBeatKeep : '1;
-
-              if (axis_out.tready) begin
-              beat_count <= beat_count + 1;
-                if (beat_count == NumBeats - 1) begin
-                  tlast <= 1'b1;
-                end else if (beat_count == NumBeats) begin
-                  state <= IDLE;  // Last beat, move to IDLE state
-                  finished <= 1'b1;  // Indicate done after sending all data
-                  tlast <= 1'b0;
-                  tvalid <= 1'b0;
-                  beat_count <= '0;
-                end
-              end
-            end
-          endcase
+      end else if (active && m_axis.tready) begin
+        shift_reg <= shift_reg >> AxisWidth;
+        beat_count <= beat_count + 1;
+        m_axis.tkeep <= {m_axis.KEEP_WIDTH{1'b1}};
+        if (beat_count == LastBeat) begin
+          active <= 1'b0;
+          m_axis.tkeep <= LastKeep;
         end
       end
     end
-  endgenerate
-
+  end
 
 endmodule

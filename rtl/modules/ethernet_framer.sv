@@ -12,7 +12,7 @@ module ethernet_framer #(
     axi4s_if.m framed_out  // AXI4-Stream interface for framed Ethernet output
 );
 
-  localparam int PayloadWidth = $bits(payload_in.tdata);
+  localparam int PayloadWidth = $bits(payload_in.DATA_WIDTH);
   localparam int PayloadKeep = $bits(payload_in.tkeep);
   localparam int OutWidth = $bits(framed_out.tdata);
   localparam int OutKeep = $bits(framed_out.tkeep);
